@@ -317,7 +317,7 @@ class HiViTMaskedAutoencoder(MaskedAutoencoder, HiViT):
             x = torch.cat([h_flat, m_flat, l], dim=-1)
             x = self.norm(x)
             if self._multiscale_loss_weight > 0:
-                self._stage_feats = (h_flat, m_flat)
+                self._stage_feats = (h_flat, m_flat, ids_keep)
         else:
             x = self.forward_features(x, ids_keep=ids_keep)
 
@@ -366,16 +366,24 @@ class HiViTMaskedAutoencoder(MaskedAutoencoder, HiViT):
         loss_main = (loss * mask).sum() / num_preds
 
         # Per-scale auxiliary losses (FM-11)
+        # h_flat/m_flat only contain KEPT tokens, so gather corresponding targets
         if self._multiscale_loss_weight > 0 and self._stage_feats is not None:
-            h_flat, m_flat = self._stage_feats
-            # S1: h features -> predict GF kernel=9
+            h_flat, m_flat, ids_keep = self._stage_feats
+            len_keep = h_flat.shape[1]
+
+            gf1_kept = torch.gather(
+                gf1, 1, ids_keep.unsqueeze(-1).expand(-1, -1, gf1.shape[-1])
+            )
+            gf2_kept = torch.gather(
+                gf2, 1, ids_keep.unsqueeze(-1).expand(-1, -1, gf2.shape[-1])
+            )
+
+            # S1: h features -> predict GF kernel=9 (on kept tokens only)
             pred_s1 = self.decoder_s1(h_flat)
-            loss_s1 = ((pred_s1 - gf1) ** 2).mean(dim=-1)
-            loss_s1 = (loss_s1 * mask).sum() / num_preds
-            # S2: m features -> predict GF kernel=13
+            loss_s1 = ((pred_s1 - gf1_kept) ** 2).mean()
+            # S2: m features -> predict GF kernel=13 (on kept tokens only)
             pred_s2 = self.decoder_s2(m_flat)
-            loss_s2 = ((pred_s2 - gf2) ** 2).mean(dim=-1)
-            loss_s2 = (loss_s2 * mask).sum() / num_preds
+            loss_s2 = ((pred_s2 - gf2_kept) ** 2).mean()
 
             loss_main = loss_main + self._multiscale_loss_weight * (loss_s1 + loss_s2)
 
