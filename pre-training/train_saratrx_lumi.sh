@@ -1,0 +1,149 @@
+#!/bin/bash -l
+#SBATCH --job-name=saratrx_pretrain
+#SBATCH --output=saratrx_pretrain.o%j
+#SBATCH --error=saratrx_pretrain.e%j
+#SBATCH --partition=standard-g
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=8
+#SBATCH --gpus-per-node=8
+#SBATCH --cpus-per-task=7
+#SBATCH --time=48:00:00
+#SBATCH --account=project_462001182
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Train SARATR-X (HiViT MAE) on SAR HDF5 tiles — 1 node, 8 MI250X GCDs
+#
+# Usage:
+#   sbatch SARATR-X/pre-training/train_saratrx_lumi.sh
+#
+# Resume: auto-resumes from checkpoint-latest.pth if present in OUTPUT_DIR.
+# ---------------------------------------------------------------------------
+
+# -- paths ----------------------------------------------------------------
+ISR_REPO="${HOME}/projects/isr-automatic-target-recognition"
+SARATRX="${HOME}/projects/SARATR-X"
+
+DATA_ROOT="/scratch/project_462001182/snow_owl/data/datasets/alm_csi_experiment_grd_resampled_05"
+H5_TRAIN="${DATA_ROOT}/train.h5"
+H5_TEST="${DATA_ROOT}/test.h5"
+
+OUTPUT_DIR="/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain"
+
+# ImageNet-pretrained HiViT MAE init weights (set to "" to skip)
+INIT_CKPT="${SARATRX}/pre-training/mae_hivit_base_1600ep.pth"
+
+SIF="${SIF:-/scratch/project_462001182/snow_owl/containers/singularity/atr-base.sif}"
+
+# -- hyperparameters ------------------------------------------------------
+# For 768x768 resolution training (FM-3 experiment):
+#   BATCH_SIZE=6, ACCUM_ITER=10 → effective = 6 * 10 * 8 = 480
+#   BLR="3e-5" (lower LR for continued pretraining)
+#   INPUT_SIZE=768
+# For 224x224 (original):
+#   BATCH_SIZE=64, ACCUM_ITER=1 → effective = 64 * 1 * 8 = 512
+#   BLR="1.5e-4"
+#   INPUT_SIZE=224
+INPUT_SIZE="${INPUT_SIZE:-768}"
+EPOCHS="${EPOCHS:-200}"
+BATCH_SIZE="${BATCH_SIZE:-6}"
+ACCUM_ITER="${ACCUM_ITER:-10}"
+BLR="${BLR:-3e-5}"
+MASK_RATIO=0.75
+SAVE_INTERVAL=25
+VAL_INTERVAL=25
+WANDB_PROJECT="saratrx-pretrain"
+WANDB_RUN_ID="${WANDB_RUN_ID:-}"
+
+# -- ROCm / MIOpen tuning ------------------------------------------------
+export MIOPEN_USER_DB_PATH="/tmp/${USER}-miopen-cache-${SLURM_JOB_ID}"
+export MIOPEN_CUSTOM_CACHE_DIR="${MIOPEN_USER_DB_PATH}"
+
+# -- uv cache on node-local NVMe -----------------------------------------
+export UV_CACHE_DIR="/tmp/${USER}-uv-cache-${SLURM_JOB_ID}"
+export UV_LINK_MODE=copy
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
+export PYTORCH_ALLOC_CONF="garbage_collection_threshold:0.8,max_split_size_mb:128"
+
+# -- WandB ----------------------------------------------------------------
+if [[ -z "${WANDB_API_KEY:-}" ]] && [[ -f ~/.wandb_key ]]; then
+    export WANDB_API_KEY=$(<~/.wandb_key tr -d '[:space:]')
+fi
+
+# -- Singularity binds ----------------------------------------------------
+BIND="/scratch/project_462001182"
+BIND="${BIND},${HOME}/projects:${HOME}/projects"
+BIND="${BIND},/etc/ssl/certs:/etc/ssl/certs:ro"
+[[ -f /etc/ssl/openssl.cnf ]] && BIND="${BIND},/etc/ssl/openssl.cnf:/etc/ssl/openssl.cnf:ro"
+[[ -d /etc/pki ]]             && BIND="${BIND},/etc/pki:/etc/pki:ro"
+BIND="${BIND},/etc/resolv.conf:/etc/resolv.conf:ro"
+BIND="${BIND},/etc/hosts:/etc/hosts:ro"
+BIND="${BIND},/etc/nsswitch.conf:/etc/nsswitch.conf:ro"
+export SINGULARITY_BIND="${BIND}"
+export SINGULARITYENV_SLURM_JOB_ID="${SLURM_JOB_ID}"
+
+# -- select_gpu wrapper (inline) -----------------------------------------
+# Each srun task sees exactly one GCD via ROCR_VISIBLE_DEVICES
+SELECT_GPU_SCRIPT=$(mktemp /tmp/select_gpu_XXXX.sh)
+cat > "${SELECT_GPU_SCRIPT}" <<'GPUEOF'
+#!/bin/bash
+export ROCR_VISIBLE_DEVICES="${SLURM_LOCALID}"
+exec "$@"
+GPUEOF
+chmod +x "${SELECT_GPU_SCRIPT}"
+
+# -- launch ---------------------------------------------------------------
+echo "=== SARATR-X pre-training ==="
+echo "  Job ID     : ${SLURM_JOB_ID}"
+echo "  Nodes      : ${SLURM_NODELIST}"
+echo "  GPUs       : 8"
+echo "  H5 train   : ${H5_TRAIN}"
+echo "  H5 test    : ${H5_TEST}"
+echo "  Output     : ${OUTPUT_DIR}"
+echo "  Init ckpt  : ${INIT_CKPT}"
+echo "  Input size : ${INPUT_SIZE}"
+echo "  Epochs     : ${EPOCHS}"
+echo "  Batch/GPU  : ${BATCH_SIZE}"
+echo "  Accum iter : ${ACCUM_ITER}"
+echo "  Base LR    : ${BLR}"
+echo "  Container  : ${SIF}"
+echo ""
+
+# Phase 1: sync venv once (single process) so srun tasks don't race
+echo "==> Syncing venv (single process)..."
+singularity exec --rocm "${SIF}" \
+    bash -c "cd ${ISR_REPO} && uv sync --extra rocm --extra mtl-yolo && uv pip install timm==0.5.4 && uv pip install --force-reinstall matplotlib"
+echo "==> Venv ready."
+
+# Phase 2: training (8 tasks, --frozen prevents venv modifications)
+srun --kill-on-bad-exit=1 \
+     --cpu-bind=map_cpu:49,57,17,25,1,9,33,41 \
+     "${SELECT_GPU_SCRIPT}" \
+     singularity exec --rocm "${SIF}" \
+     bash -c "
+         cd ${ISR_REPO} && \
+         PYTHONPATH=${SARATRX}/pre-training:\${PYTHONPATH:-} \
+         uv run --frozen --extra rocm --extra mtl-yolo \
+         python ${SARATRX}/pre-training/train_h5_lumi.py \
+             --h5_train  ${H5_TRAIN} \
+             --h5_test   ${H5_TEST} \
+             --init_ckpt ${INIT_CKPT} \
+             --output_dir ${OUTPUT_DIR} \
+             --resume auto \
+             --input_size ${INPUT_SIZE} \
+             --epochs ${EPOCHS} \
+             --batch_size ${BATCH_SIZE} \
+             --accum_iter ${ACCUM_ITER} \
+             --blr ${BLR} \
+             --mask_ratio ${MASK_RATIO} \
+             --save_interval ${SAVE_INTERVAL} \
+             --val_interval ${VAL_INTERVAL} \
+             --wandb_project ${WANDB_PROJECT} \
+             ${WANDB_RUN_ID:+--wandb_run_id ${WANDB_RUN_ID}} \
+             --num_workers 4 \
+             --pin_mem
+     "
+
+rm -f "${SELECT_GPU_SCRIPT}"
+echo "=== Done ==="
