@@ -221,6 +221,9 @@ class HiViTMaskedAutoencoder(MaskedAutoencoder, HiViT):
         # m: 256ch * 2*2 inner = 1024D per token -> predict GF kernel=13 (256D)
         # l: 512D per token -> already in main decoder
         self._multiscale_loss_weight = 0.0  # disabled by default
+        self._stage_feats = None
+        self._use_object_aware_masking = False
+        self._saliency_bias = 0.3
         self.decoder_s1 = nn.Sequential(
             nn.Linear(2048, 512),
             nn.GELU(),
@@ -300,7 +303,7 @@ class HiViTMaskedAutoencoder(MaskedAutoencoder, HiViT):
         return ids_keep, ids_restore, mask
 
     def forward_encoder(self, x, mask_ratio, imgs_for_saliency=None):
-        if imgs_for_saliency is not None and hasattr(self, '_use_object_aware_masking') and self._use_object_aware_masking:
+        if self._use_object_aware_masking and imgs_for_saliency is not None:
             ids_keep, ids_restore, mask = self.object_aware_masking(
                 imgs_for_saliency, mask_ratio, self._saliency_bias
             )
