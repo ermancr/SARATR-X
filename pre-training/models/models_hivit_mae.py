@@ -214,6 +214,23 @@ class HiViTMaskedAutoencoder(MaskedAutoencoder, HiViT):
         self.decoder_norm = norm_layer(decoder_embed_dim)
         # self.decoder_pred = nn.Linear(decoder_embed_dim, self.decoder_patch_size**2 * in_chans, bias=True) # decoder to patch
         self.decoder_pred = nn.Linear(decoder_embed_dim, 256*3, bias=True)  # decoder to patch
+
+        # Per-scale auxiliary decoders (FM-11): force each HiViT stage to be
+        # independently useful by predicting its corresponding GF scale.
+        # h: 128ch * 4*4 inner = 2048D per token -> predict GF kernel=9 (256D)
+        # m: 256ch * 2*2 inner = 1024D per token -> predict GF kernel=13 (256D)
+        # l: 512D per token -> already in main decoder
+        self._multiscale_loss_weight = 0.0  # disabled by default
+        self.decoder_s1 = nn.Sequential(
+            nn.Linear(2048, 512),
+            nn.GELU(),
+            nn.Linear(512, 256),
+        )
+        self.decoder_s2 = nn.Sequential(
+            nn.Linear(1024, 512),
+            nn.GELU(),
+            nn.Linear(512, 256),
+        )
         # --------------------------------------------------------------------------
 
         # initialize (and freeze) pos_embed by sin-cos embedding
@@ -290,12 +307,17 @@ class HiViTMaskedAutoencoder(MaskedAutoencoder, HiViT):
         else:
             ids_keep, ids_restore, mask = self.masking_id(x.size(0), mask_ratio)
 
+        self._stage_feats = None
         if self.hifeat:
             x = self.forward_features(x, ids_keep=ids_keep, return_hifeat=True)
             h, m, l = x
             B, N, _ = l.shape
-            x = torch.cat([h.reshape(B, N, -1), m.reshape(B, N, -1), l], dim=-1)
+            h_flat = h.reshape(B, N, -1)
+            m_flat = m.reshape(B, N, -1)
+            x = torch.cat([h_flat, m_flat, l], dim=-1)
             x = self.norm(x)
+            if self._multiscale_loss_weight > 0:
+                self._stage_feats = (h_flat, m_flat)
         else:
             x = self.forward_features(x, ids_keep=ids_keep)
 
@@ -329,9 +351,11 @@ class HiViTMaskedAutoencoder(MaskedAutoencoder, HiViT):
         mask: [N, L], 0 is keep, 1 is remove, 
         """
         num_preds = mask.sum()
-        # target = self.patchify(imgs)
-        target = torch.cat([self.patchify(self.sarfeature1(imgs)), self.patchify(self.sarfeature2(imgs)), self.patchify(self.sarfeature3(imgs))], dim=-1)
-        # target = self.patchify(self.hogs2(imgs))
+        gf1 = self.patchify(self.sarfeature1(imgs))
+        gf2 = self.patchify(self.sarfeature2(imgs))
+        gf3 = self.patchify(self.sarfeature3(imgs))
+        target = torch.cat([gf1, gf2, gf3], dim=-1)
+
         if self.norm_pix_loss:
             mean = target.mean(dim=-1, keepdim=True)
             var = target.var(dim=-1, keepdim=True)
@@ -339,8 +363,23 @@ class HiViTMaskedAutoencoder(MaskedAutoencoder, HiViT):
 
         loss = (pred - target) ** 2
         loss = loss.mean(dim=-1)
-        loss = (loss * mask).sum() / num_preds
-        return loss
+        loss_main = (loss * mask).sum() / num_preds
+
+        # Per-scale auxiliary losses (FM-11)
+        if self._multiscale_loss_weight > 0 and self._stage_feats is not None:
+            h_flat, m_flat = self._stage_feats
+            # S1: h features -> predict GF kernel=9
+            pred_s1 = self.decoder_s1(h_flat)
+            loss_s1 = ((pred_s1 - gf1) ** 2).mean(dim=-1)
+            loss_s1 = (loss_s1 * mask).sum() / num_preds
+            # S2: m features -> predict GF kernel=13
+            pred_s2 = self.decoder_s2(m_flat)
+            loss_s2 = ((pred_s2 - gf2) ** 2).mean(dim=-1)
+            loss_s2 = (loss_s2 * mask).sum() / num_preds
+
+            loss_main = loss_main + self._multiscale_loss_weight * (loss_s1 + loss_s2)
+
+        return loss_main
 
     def enable_object_aware_masking(self, saliency_bias: float = 0.3):
         """Enable saliency-biased masking for object-focused pretraining."""
@@ -350,6 +389,14 @@ class HiViTMaskedAutoencoder(MaskedAutoencoder, HiViT):
     def disable_object_aware_masking(self):
         """Revert to random uniform masking."""
         self._use_object_aware_masking = False
+
+    def enable_multiscale_loss(self, weight: float = 0.3):
+        """Enable per-scale auxiliary decoder losses."""
+        self._multiscale_loss_weight = weight
+
+    def disable_multiscale_loss(self):
+        """Disable per-scale decoder losses."""
+        self._multiscale_loss_weight = 0.0
 
     def forward(self, imgs, mask_ratio=0.75):
         x3 = torch.cat([imgs, imgs, imgs], dim=1)

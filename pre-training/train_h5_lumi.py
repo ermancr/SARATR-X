@@ -438,6 +438,10 @@ def get_args_parser():
                    help="Use saliency-biased masking (mask objects more)")
     p.add_argument("--saliency_bias", type=float, default=0.3,
                    help="Saliency bias strength (0=random, 0.5=strong bias)")
+    p.add_argument("--multiscale_loss", action="store_true",
+                   help="Enable per-scale decoder losses (FM-11)")
+    p.add_argument("--multiscale_loss_weight", type=float, default=0.3,
+                   help="Weight for per-scale auxiliary losses")
 
     # checkpointing
     p.add_argument("--init_ckpt", type=str, default="",
@@ -586,6 +590,10 @@ def main(args):
     if getattr(args, "object_aware_masking", False):
         model.enable_object_aware_masking(saliency_bias=args.saliency_bias)
         print(f"Object-aware masking enabled (saliency_bias={args.saliency_bias})")
+
+    if getattr(args, "multiscale_loss", False):
+        model.enable_multiscale_loss(weight=args.multiscale_loss_weight)
+        print(f"Multi-scale decoder loss enabled (weight={args.multiscale_loss_weight})")
 
     model.to(device)
     model_without_ddp = model
