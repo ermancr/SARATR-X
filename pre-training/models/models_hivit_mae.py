@@ -245,9 +245,49 @@ class HiViTMaskedAutoencoder(MaskedAutoencoder, HiViT):
         mask = torch.gather(mask, dim=1, index=ids_restore)
 
         return ids_keep, ids_restore, mask
-    
-    def forward_encoder(self, x, mask_ratio):
-        ids_keep, ids_restore, mask = self.masking_id(x.size(0), mask_ratio)
+
+    def object_aware_masking(self, imgs, mask_ratio=0.75, saliency_bias=0.3):
+        """Saliency-biased masking: preferentially mask object-like patches.
+
+        Uses the gradient magnitude (sarfeature1) as a saliency proxy.
+        High-saliency patches (objects/edges) are more likely to be masked,
+        forcing the encoder to reconstruct objects from context.
+        """
+        B = imgs.shape[0]
+        L = self.absolute_pos_embed.size(1)
+        Hp = int(L ** 0.5)
+        len_keep = int(L * (1 - mask_ratio))
+
+        with torch.no_grad():
+            grad_mag = self.sarfeature1(imgs).mean(dim=1)  # (B, H, W)
+            patch_saliency = F.adaptive_avg_pool2d(
+                grad_mag.unsqueeze(1), (Hp, Hp)
+            ).flatten(1)  # (B, L)
+
+            sal_min = patch_saliency.min(dim=1, keepdim=True).values
+            sal_max = patch_saliency.max(dim=1, keepdim=True).values
+            patch_saliency = (patch_saliency - sal_min) / (sal_max - sal_min + 1e-8)
+
+        noise = torch.rand(B, L, device=imgs.device)
+        biased_noise = noise - saliency_bias * patch_saliency
+
+        ids_shuffle = torch.argsort(biased_noise, dim=1)
+        ids_restore = torch.argsort(ids_shuffle, dim=1)
+
+        ids_keep = ids_shuffle[:, :len_keep]
+        mask = torch.ones([B, L], device=imgs.device)
+        mask[:, :len_keep] = 0
+        mask = torch.gather(mask, dim=1, index=ids_restore)
+
+        return ids_keep, ids_restore, mask
+
+    def forward_encoder(self, x, mask_ratio, imgs_for_saliency=None):
+        if imgs_for_saliency is not None and hasattr(self, '_use_object_aware_masking') and self._use_object_aware_masking:
+            ids_keep, ids_restore, mask = self.object_aware_masking(
+                imgs_for_saliency, mask_ratio, self._saliency_bias
+            )
+        else:
+            ids_keep, ids_restore, mask = self.masking_id(x.size(0), mask_ratio)
 
         if self.hifeat:
             x = self.forward_features(x, ids_keep=ids_keep, return_hifeat=True)
@@ -301,8 +341,18 @@ class HiViTMaskedAutoencoder(MaskedAutoencoder, HiViT):
         loss = (loss * mask).sum() / num_preds
         return loss
 
+    def enable_object_aware_masking(self, saliency_bias: float = 0.3):
+        """Enable saliency-biased masking for object-focused pretraining."""
+        self._use_object_aware_masking = True
+        self._saliency_bias = saliency_bias
+
+    def disable_object_aware_masking(self):
+        """Revert to random uniform masking."""
+        self._use_object_aware_masking = False
+
     def forward(self, imgs, mask_ratio=0.75):
-        latent, mask, ids_restore = self.forward_encoder(torch.cat([imgs, imgs, imgs], dim=1), mask_ratio)
+        x3 = torch.cat([imgs, imgs, imgs], dim=1)
+        latent, mask, ids_restore = self.forward_encoder(x3, mask_ratio, imgs_for_saliency=imgs)
         cls_pred, pred = self.forward_decoder(latent, ids_restore)
         loss = self.forward_loss(imgs, cls_pred, pred, mask)
         return loss, pred, mask

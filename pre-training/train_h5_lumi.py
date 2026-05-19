@@ -434,6 +434,10 @@ def get_args_parser():
     p.add_argument("--mask_ratio", default=0.75, type=float)
     p.add_argument("--norm_pix_loss", action="store_true")
     p.set_defaults(norm_pix_loss=False)
+    p.add_argument("--object_aware_masking", action="store_true",
+                   help="Use saliency-biased masking (mask objects more)")
+    p.add_argument("--saliency_bias", type=float, default=0.3,
+                   help="Saliency bias strength (0=random, 0.5=strong bias)")
 
     # checkpointing
     p.add_argument("--init_ckpt", type=str, default="",
@@ -578,6 +582,10 @@ def main(args):
         else:
             print(f"WARNING: init_ckpt not found at {ckpt_path}, "
                   "training from scratch")
+
+    if getattr(args, "object_aware_masking", False):
+        model.enable_object_aware_masking(saliency_bias=args.saliency_bias)
+        print(f"Object-aware masking enabled (saliency_bias={args.saliency_bias})")
 
     model.to(device)
     model_without_ddp = model
