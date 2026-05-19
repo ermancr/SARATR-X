@@ -269,7 +269,8 @@ class HiViTMaskedAutoencoder(MaskedAutoencoder, HiViT):
             patch_saliency = (patch_saliency - sal_min) / (sal_max - sal_min + 1e-8)
 
         noise = torch.rand(B, L, device=imgs.device)
-        biased_noise = noise - saliency_bias * patch_saliency
+        # Add bias for high-saliency patches: higher value → sorted later → masked
+        biased_noise = noise + saliency_bias * patch_saliency
 
         ids_shuffle = torch.argsort(biased_noise, dim=1)
         ids_restore = torch.argsort(ids_shuffle, dim=1)
