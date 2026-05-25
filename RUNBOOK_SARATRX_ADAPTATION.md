@@ -2,7 +2,7 @@
 
 Run these experiments **in the order shown**. Phase 0 establishes the pure-YOLO baseline. Phase 1 (no re-pretraining) and Phase 2 (improved encoder) can be submitted in parallel. Phase 3 combines the best encoder with Phase 1 adaptation.
 
-**Linear Project:** [SARATR-X adaption to Iceye data for ATR](https://linear.app/iceye/project/saratr-x-adaption-to-iceye-data-for-atr-71a7cd8fe1ab)
+**Linear Parent Issue:** [FM-24 MAE (SARATR-X)](https://linear.app/iceye/issue/FM-24/mae-saratr-x) (under the *Modelling* project, team `foundationModelDevelopment`)
 
 **W&B Project:** `snow_owl`
 
@@ -27,9 +27,9 @@ ls /scratch/project_462001182/snow_owl/data/models/yolo/pretrained_weights/v9-m.
 # Verify SaRaTrX existing pretrained checkpoint (used by Phase 1)
 ls /scratch/project_462001182/snow_owl/experiments/saratrx_pretrain/checkpoint-800.pth
 
-# Verify SaRaTrX pretraining data (used by Phase 2)
-ls /scratch/project_462001182/snow_owl/data/datasets/alm_csi_experiment_grd_resampled_05/train.h5
-ls /scratch/project_462001182/snow_owl/data/datasets/alm_csi_experiment_grd_resampled_05/test.h5
+# Verify SaRaTrX pretraining data (used by Phase 2 — same as YOLO data)
+ls /scratch/project_462001182/snow_owl/data/datasets/air_land_maritime_best_20260511_003_resampled_05/train.h5
+ls /scratch/project_462001182/snow_owl/data/datasets/air_land_maritime_test_20260513_001_resampled_05/test.h5
 
 # Verify containers
 ls /scratch/project_462001182/snow_owl/containers/uv_wrappers/mtl-yolo-rocm-macar-dev/bin/mtl-yolo
@@ -69,7 +69,7 @@ sbatch infra/lumi/train/train_lumi_wrapper_saratrx.sh \
 
 These experiments add SaRaTrX HiViT feature injection on top of the Phase 0 baseline. They share the same training config as Phase 0 (`train_alm_saratrx_injected.yaml` is byte-identical to `train_alm_saratrx_onlyYolo.yaml` except for the `saratrx:` block). All use the existing 224px `checkpoint-800.pth` SaRaTrX checkpoint. Submit in parallel with Phase 0.
 
-### Experiment 1C: Frozen SaRaTrX Features (raw injection)
+### Experiment 1C: Frozen SaRaTrX Features — raw injection
 
 **Branch:** `fm-1-train-mtl-yolo-with-sar-atrx-representation` (ISR repo)
 **Expected duration:** ~24h (40 epochs)
@@ -79,14 +79,14 @@ cd ~/projects/isr-automatic-target-recognition
 git checkout fm-1-train-mtl-yolo-with-sar-atrx-representation
 
 sbatch infra/lumi/train/train_lumi_wrapper_saratrx.sh \
-    configs/mtl_yolo/lumi/train_alm_saratrx_injected.yaml
+    configs/mtl_yolo/lumi/train_alm_saratrx_1c_frozen.yaml
 ```
 
 **What's enabled:** Raw frozen HiViT features injected via widened AConv layers. No projection, no LoRA. Measures the contribution of HiViT features alone (vs. Phase 0).
 
-**Monitor:** W&B experiment `alm-saratrx-injected` (or whatever name is set on `fm-1` branch's config).
+**Monitor:** W&B experiment `alm-saratrx-1c-frozen`
 
-### Experiment 1B: + Feature Projection + SE Attention (FM-7 ablation)
+### Experiment 1B [C3]: + Feature Projection + SE Attention (FM-7 ablation)
 
 **Branch:** `fm-7-c3-feature-projection-heads-se-attention` (ISR repo)
 **Linear:** FM-7
@@ -96,14 +96,14 @@ cd ~/projects/isr-automatic-target-recognition
 git checkout fm-7-c3-feature-projection-heads-se-attention
 
 sbatch infra/lumi/train/train_lumi_wrapper_saratrx.sh \
-    configs/mtl_yolo/lumi/train_alm_saratrx_injected.yaml
+    configs/mtl_yolo/lumi/train_alm_saratrx_1b_projection_se.yaml
 ```
 
 **What's enabled:** Projection heads (Conv1x1+BN+SiLU+SE) only — no LoRA. Measures channel-adaptation contribution.
 
-**Monitor:** W&B experiment `alm-saratrx-projection-se`
+**Monitor:** W&B experiment `alm-saratrx-1b-projection-se`
 
-### Experiment 1A: + Feature Projection + SE + LoRA (FM-6 + FM-7, full Phase 1 stack)
+### Experiment 1A [C2+C3]: + Feature Projection + SE + LoRA (FM-6 + FM-7, full Phase 1 stack)
 
 **Branch:** `fm-6-c2-lora-adapters-on-hivit-attention` (ISR repo)
 **Linear:** FM-6, FM-7
@@ -114,142 +114,64 @@ cd ~/projects/isr-automatic-target-recognition
 git checkout fm-6-c2-lora-adapters-on-hivit-attention
 
 sbatch infra/lumi/train/train_lumi_wrapper_saratrx.sh \
-    configs/mtl_yolo/lumi/train_alm_saratrx_injected.yaml
+    configs/mtl_yolo/lumi/train_alm_saratrx_1a_projection_se_lora.yaml
 ```
 
 **What's enabled:** Projection heads (Conv1x1+BN+SiLU+SE) + LoRA rank-4 on last 4 HiViT attention blocks.
 
-**Monitor:** W&B experiment `alm-saratrx-projection-se-lora`
+**Monitor:** W&B experiment `alm-saratrx-1a-projection-se-lora`
 
 ---
 
 ## Phase 2 — Improved SaRaTrX Pretraining
 
-These improve the encoder itself. Submit after Phase 1 starts (they run independently).
+These improve the encoder itself. Submit after Phase 1 starts (they run independently). Each experiment isolates one pretraining improvement for proper ablation.
 
-### Experiment 2A: 768px + Object-Aware Masking + Multi-Scale Loss (FM-3 + FM-10 + FM-11)
+All experiments use `train_saratrx_lumi.sh` as the base launcher with env-var overrides for `OUTPUT_DIR` and experiment-specific flags.
 
-**Branch:** `fm-11-d4-multi-scale-decoder-loss` (SARATR-X repo)
-**Linear:** FM-3, FM-10, FM-11
+### Experiment 2A [B]: 768px Resolution Only (FM-3)
+
+**Branch:** `fm-3-b-resolution-matched-pretraining-768x768` (SARATR-X repo)
+**Linear:** [FM-3](https://linear.app/iceye/issue/FM-3)
 **Expected duration:** 3-4 days (200 epochs at 768px)
 
 ```bash
-cd ~/projects/SARATR-X
-git checkout fm-11-d4-multi-scale-decoder-loss
-
-# Full stack: 768px resolution + object-aware masking + per-scale decoder
-OUTPUT_DIR=/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain_768_full \
+cd ~/projects/SARATR-X && git checkout fm-3-b-resolution-matched-pretraining-768x768 && \
+OUTPUT_DIR=/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain_2a_768_baseline \
 sbatch pre-training/train_saratrx_lumi.sh
 ```
 
-To also enable object-aware masking and multi-scale loss, edit the python command in the script or pass env vars. The simplest approach is to edit the srun command in the script to add the flags:
+**What's enabled:** 768px resolution pretraining from checkpoint-800.pth. No OAM, no MSL. Measures resolution impact alone.
+**Monitor:** W&B project `saratrx-pretrain`
+
+### Experiment 2B [B+D3]: 768px + Object-Aware Masking (FM-3 + FM-10)
+
+**Branch:** `fm-10-d3-object-aware-masking` (SARATR-X repo)
+**Linear:** [FM-3](https://linear.app/iceye/issue/FM-3), [FM-10](https://linear.app/iceye/issue/FM-10)
+**Expected duration:** 3-4 days (200 epochs at 768px)
 
 ```bash
-# Edit train_saratrx_lumi.sh srun command to add:
-#   --object_aware_masking --saliency_bias 0.3 \
-#   --multiscale_loss --multiscale_loss_weight 0.3 \
-```
-
-Or create a one-liner launcher:
-
-```bash
-cd ~/projects/SARATR-X
-git checkout fm-11-d4-multi-scale-decoder-loss
-
-cat > /tmp/launch_saratrx_768_full.sh << 'LAUNCH'
-#!/bin/bash -l
-#SBATCH --job-name=saratrx_768_full
-#SBATCH --output=saratrx_768_full.o%j
-#SBATCH --error=saratrx_768_full.e%j
-#SBATCH --partition=standard-g
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=8
-#SBATCH --gpus-per-node=8
-#SBATCH --cpus-per-task=7
-#SBATCH --time=96:00:00
-#SBATCH --account=project_462001182
-export MIOPEN_USER_DB_PATH="/tmp/${USER}-miopen-cache-${SLURM_JOB_ID}"
-export MIOPEN_CUSTOM_CACHE_DIR="${MIOPEN_USER_DB_PATH}"
-export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
-export PYTORCH_ALLOC_CONF="garbage_collection_threshold:0.8,max_split_size_mb:128"
-[[ -f ~/.wandb_key ]] && export WANDB_API_KEY=$(<~/.wandb_key tr -d '[:space:]')
-
-ISR_REPO="${HOME}/projects/isr-automatic-target-recognition"
-SARATRX="${HOME}/projects/SARATR-X"
-SIF="/scratch/project_462001182/snow_owl/containers/singularity/atr-base.sif"
-OUTPUT_DIR="/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain_768_full"
-H5_TRAIN="/scratch/project_462001182/snow_owl/data/datasets/alm_csi_experiment_grd_resampled_05/train.h5"
-H5_TEST="/scratch/project_462001182/snow_owl/data/datasets/alm_csi_experiment_grd_resampled_05/test.h5"
-INIT_CKPT="/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain/checkpoint-800.pth"
-
-BIND="/scratch/project_462001182,${HOME}/projects:${HOME}/projects"
-BIND="${BIND},/etc/ssl/certs:/etc/ssl/certs:ro,/etc/resolv.conf:/etc/resolv.conf:ro"
-BIND="${BIND},/etc/hosts:/etc/hosts:ro,/etc/nsswitch.conf:/etc/nsswitch.conf:ro"
-export SINGULARITY_BIND="${BIND}"
-
-SELECT_GPU=$(mktemp /tmp/select_gpu_XXXX.sh)
-cat > "${SELECT_GPU}" << 'GPU'
-#!/bin/bash
-export ROCR_VISIBLE_DEVICES="${SLURM_LOCALID}"
-exec "$@"
-GPU
-chmod +x "${SELECT_GPU}"
-
-singularity exec --rocm "${SIF}" \
-    bash -c "cd ${ISR_REPO} && uv sync --extra rocm --extra mtl-yolo && uv pip install timm==0.5.4"
-
-srun --kill-on-bad-exit=1 \
-     --cpu-bind=map_cpu:49,57,17,25,1,9,33,41 \
-     "${SELECT_GPU}" \
-     singularity exec --rocm "${SIF}" \
-     bash -c "
-         cd ${ISR_REPO} && \
-         PYTHONPATH=${SARATRX}/pre-training:\${PYTHONPATH:-} \
-         uv run --frozen --extra rocm --extra mtl-yolo \
-         python ${SARATRX}/pre-training/train_h5_lumi.py \
-             --h5_train  ${H5_TRAIN} \
-             --h5_test   ${H5_TEST} \
-             --init_ckpt ${INIT_CKPT} \
-             --output_dir ${OUTPUT_DIR} \
-             --resume auto \
-             --input_size 768 \
-             --epochs 200 \
-             --batch_size 6 \
-             --accum_iter 10 \
-             --blr 3e-5 \
-             --mask_ratio 0.75 \
-             --object_aware_masking \
-             --saliency_bias 0.3 \
-             --multiscale_loss \
-             --multiscale_loss_weight 0.3 \
-             --save_interval 25 \
-             --val_interval 25 \
-             --wandb_project saratrx-pretrain \
-             --wandb_run_name saratrx_768_oam_msl \
-             --num_workers 4 \
-             --pin_mem
-     "
-rm -f "${SELECT_GPU}"
-LAUNCH
-
-sbatch /tmp/launch_saratrx_768_full.sh
-```
-
-**Monitor:** W&B project `saratrx-pretrain`, run `saratrx_768_oam_msl`
-
-### Experiment 2B: 768px Resolution Only (FM-3 ablation)
-
-Same as 2A but without object-aware masking or multi-scale loss. Measures resolution impact alone.
-
-```bash
-cd ~/projects/SARATR-X
-git checkout fm-3-b-resolution-matched-pretraining-768x768
-
-OUTPUT_DIR=/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain_768_baseline \
-WANDB_RUN_ID="" \
+cd ~/projects/SARATR-X && git checkout fm-10-d3-object-aware-masking && \
+OUTPUT_DIR=/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain_2b_768_oam \
 sbatch pre-training/train_saratrx_lumi.sh
 ```
 
+**What's enabled:** 768px + saliency-biased masking (objects masked more aggressively). Measures OAM contribution on top of 768px.
+**Monitor:** W&B project `saratrx-pretrain`
+
+### Experiment 2C [B+D4]: 768px + Multi-Scale Loss (FM-3 + FM-11)
+
+**Branch:** `fm-11-d4-multi-scale-decoder-loss` (SARATR-X repo)
+**Linear:** [FM-3](https://linear.app/iceye/issue/FM-3), [FM-11](https://linear.app/iceye/issue/FM-11)
+**Expected duration:** 3-4 days (200 epochs at 768px)
+
+```bash
+cd ~/projects/SARATR-X && git checkout fm-11-d4-multi-scale-decoder-loss && \
+OUTPUT_DIR=/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain_2c_768_msl \
+sbatch pre-training/train_saratrx_lumi.sh
+```
+
+**What's enabled:** 768px + per-scale decoder heads (each HiViT stage independently supervised). Measures MSL contribution on top of 768px.
 **Monitor:** W&B project `saratrx-pretrain`
 
 ---
@@ -258,35 +180,20 @@ sbatch pre-training/train_saratrx_lumi.sh
 
 After Phase 2 completes, re-run Phase 1 experiments but pointing to the new checkpoint.
 
-### Experiment 3A: Best Encoder + Projection + LoRA
+### Experiment 3A [best-2x+C2+C3]: Best Encoder + Projection + LoRA
+
+Pick the best checkpoint from Phase 2 experiments (2A, 2B, or 2C), then update the checkpoint path in the config.
 
 ```bash
 cd ~/projects/isr-automatic-target-recognition
 git checkout fm-6-c2-lora-adapters-on-hivit-attention
-```
 
-Edit `configs/mtl_yolo/lumi/train_alm_saratrx_injected.yaml`:
+# Edit the checkpoint path to point to the best Phase 2 result:
+# configs/mtl_yolo/lumi/train_alm_saratrx_3a_768full_proj_lora.yaml
+#   saratrx.checkpoint: /scratch/.../saratrx_pretrain_2X_768_.../checkpoint-200.pth
 
-```yaml
-saratrx:
-  enabled: true
-  # Point to the new 768px pretrained checkpoint
-  checkpoint: /scratch/project_462001182/snow_owl/experiments/saratrx_pretrain_768_full/checkpoint-200.pth
-  input_size: 768
-  feature_projection: true
-  se_attention: true
-  se_reduction: 16
-  lora_enabled: true
-  lora_rank: 4
-  lora_alpha: 1.0
-  lora_num_blocks: 4
-```
-
-Update experiment name to `alm-saratrx-768full-proj-lora`, then:
-
-```bash
 sbatch infra/lumi/train/train_lumi_wrapper_saratrx.sh \
-    configs/mtl_yolo/lumi/train_alm_saratrx_injected.yaml
+    configs/mtl_yolo/lumi/train_alm_saratrx_3a_768full_proj_lora.yaml
 ```
 
 ---
@@ -295,15 +202,16 @@ sbatch infra/lumi/train/train_lumi_wrapper_saratrx.sh \
 
 All YOLO experiments (Phase 0, 1, 3) use **identical** training data, model, and hyperparameters; they differ only in the `saratrx:` block of the config. Compare against Phase 0 to measure the contribution of SaRaTrX features.
 
-| Experiment | SaRaTrX Encoder | Projection | LoRA | Pretraining Modifier | Expected Contribution |
-|---|---|---|---|---|---|
-| **0 (primary baseline)** [done: [yqibzis6](https://wandb.ai/iceye/snow_owl/runs/yqibzis6)] | — (no injection) | — | — | — | YOLO-only baseline mAP |
-| 1C | Frozen 224px | No | No | 224px MAE | +raw foundation features |
-| 1B | Frozen 224px | SE+Proj | No | 224px MAE | +channel adaptation |
-| 1A | Frozen 224px | SE+Proj | Yes | 224px MAE | +attention adaptation |
-| 2A | (encoder pretraining only) | — | — | 768px+OAM+MSL | Better encoder features |
-| 2B | (encoder pretraining only) | — | — | 768px only | Resolution ablation |
-| 3A | Frozen 768px+OAM+MSL | SE+Proj | Yes | 768px+OAM+MSL | Best expected mAP |
+| Experiment | Code | SaRaTrX Encoder | Projection | LoRA | Pretraining Modifier | Expected Contribution |
+|---|---|---|---|---|---|---|
+| **0 (primary baseline)** [done: [yqibzis6](https://wandb.ai/iceye/snow_owl/runs/yqibzis6)] | — | — (no injection) | — | — | — | YOLO-only baseline mAP |
+| 1C | — | Frozen 224px | No | No | 224px MAE | +raw foundation features |
+| 1B | C3 | Frozen 224px | SE+Proj | No | 224px MAE | +channel adaptation |
+| 1A | C2+C3 | Frozen 224px | SE+Proj | Yes | 224px MAE | +attention adaptation |
+| 2A | B | (encoder pretraining only) | — | — | 768px only | Resolution ablation |
+| 2B | B+D3 | (encoder pretraining only) | — | — | 768px+OAM | +object-aware masking |
+| 2C | B+D4 | (encoder pretraining only) | — | — | 768px+MSL | +multi-scale loss |
+| 3A | best-2x+C2+C3 | Frozen 768px (best) | SE+Proj | Yes | best Phase 2 | Best expected mAP |
 
 **Reading the matrix:** rows show YOLO-side experiments (0, 1*, 3A) and pretraining-side experiments (2*). Phase 2 outputs feed into Phase 3 via the `saratrx.checkpoint` path.
 

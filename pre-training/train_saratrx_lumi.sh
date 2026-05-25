@@ -25,11 +25,10 @@ set -euo pipefail
 ISR_REPO="${HOME}/projects/isr-automatic-target-recognition"
 SARATRX="${HOME}/projects/SARATR-X"
 
-DATA_ROOT="/scratch/project_462001182/snow_owl/data/datasets/alm_csi_experiment_grd_resampled_05"
-H5_TRAIN="${DATA_ROOT}/train.h5"
-H5_TEST="${DATA_ROOT}/test.h5"
+H5_TRAIN="/scratch/project_462001182/snow_owl/data/datasets/air_land_maritime_best_20260511_003_resampled_05/train.h5"
+H5_TEST="/scratch/project_462001182/snow_owl/data/datasets/air_land_maritime_test_20260513_001_resampled_05/test.h5"
 
-OUTPUT_DIR="/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain"
+OUTPUT_DIR="${OUTPUT_DIR:-/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain}"
 
 # ImageNet-pretrained HiViT MAE init weights (set to "" to skip)
 INIT_CKPT="${SARATRX}/pre-training/mae_hivit_base_1600ep.pth"
@@ -115,6 +114,9 @@ echo "==> Syncing venv (single process)..."
 singularity exec --rocm "${SIF}" \
     bash -c "cd ${ISR_REPO} && uv sync --extra rocm --extra mtl-yolo && uv pip install timm==0.5.4 && uv pip install --force-reinstall matplotlib"
 echo "==> Venv ready."
+
+# Unset empty WANDB_RUN_ID so wandb SDK doesn't read it from env
+[[ -z "${WANDB_RUN_ID}" ]] && unset WANDB_RUN_ID
 
 # Phase 2: training (8 tasks, --frozen prevents venv modifications)
 srun --kill-on-bad-exit=1 \

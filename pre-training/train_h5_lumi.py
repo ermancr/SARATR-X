@@ -544,7 +544,10 @@ def main(args):
         print(f"Validation tiles: {val_viz.tile_indices}")
 
     # -- model ------------------------------------------------------------
-    model = models.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
+    model = models.__dict__[args.model](
+        img_size=args.input_size,
+        norm_pix_loss=args.norm_pix_loss,
+    )
 
     # optional init from ImageNet-pretrained checkpoint
     resolved_resume = args.resume
@@ -558,7 +561,19 @@ def main(args):
             ckpt = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)
             if isinstance(ckpt, dict) and "model" in ckpt:
                 ckpt = ckpt["model"]
-            msg = model.load_state_dict(ckpt, strict=False)
+            model_state = model.state_dict()
+            filtered = {}
+            skipped = []
+            for k, v in ckpt.items():
+                if k in model_state and v.shape != model_state[k].shape:
+                    skipped.append(f"{k}: ckpt {list(v.shape)} vs model {list(model_state[k].shape)}")
+                    continue
+                filtered[k] = v
+            if skipped:
+                print(f"  Skipped {len(skipped)} shape-mismatched keys (resolution change):")
+                for s in skipped:
+                    print(f"    {s}")
+            msg = model.load_state_dict(filtered, strict=False)
             print(f"  Init load result: {msg}")
         else:
             print(f"WARNING: init_ckpt not found at {ckpt_path}, "
