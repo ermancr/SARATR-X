@@ -153,6 +153,7 @@ sbatch pre-training/train_saratrx_lumi.sh
 ```bash
 cd ~/projects/SARATR-X && git checkout fm-10-d3-object-aware-masking && \
 OUTPUT_DIR=/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain_2b_768_oam \
+EXTRA_ARGS="--object_aware_masking --saliency_bias 0.3" \
 sbatch pre-training/train_saratrx_lumi.sh
 ```
 
@@ -168,6 +169,7 @@ sbatch pre-training/train_saratrx_lumi.sh
 ```bash
 cd ~/projects/SARATR-X && git checkout fm-11-d4-multi-scale-decoder-loss && \
 OUTPUT_DIR=/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain_2c_768_msl \
+EXTRA_ARGS="--multiscale_loss --multiscale_loss_weight 0.3" \
 sbatch pre-training/train_saratrx_lumi.sh
 ```
 

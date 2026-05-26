@@ -591,8 +591,11 @@ def main(args):
     model_without_ddp = model
 
     if args.distributed:
+        has_unused = hasattr(model, "decoder_s1") or hasattr(model, "decoder_s2")
         model = torch.nn.parallel.DistributedDataParallel(
-            model, device_ids=[args.gpu], find_unused_parameters=False)
+            model, device_ids=[args.gpu],
+            find_unused_parameters=has_unused,
+        )
         model_without_ddp = model.module
 
     eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
