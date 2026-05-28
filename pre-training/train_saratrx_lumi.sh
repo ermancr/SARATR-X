@@ -54,6 +54,8 @@ SAVE_INTERVAL=25
 VAL_INTERVAL=25
 WANDB_PROJECT="saratrx-pretrain"
 WANDB_RUN_ID="${WANDB_RUN_ID:-}"
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-}"
+EXTRA_ARGS="${EXTRA_ARGS:-}"
 
 # -- ROCm / MIOpen tuning ------------------------------------------------
 export MIOPEN_USER_DB_PATH="/tmp/${USER}-miopen-cache-${SLURM_JOB_ID}"
@@ -143,8 +145,10 @@ srun --kill-on-bad-exit=1 \
              --val_interval ${VAL_INTERVAL} \
              --wandb_project ${WANDB_PROJECT} \
              ${WANDB_RUN_ID:+--wandb_run_id ${WANDB_RUN_ID}} \
+             ${WANDB_RUN_NAME:+--wandb_run_name ${WANDB_RUN_NAME}} \
              --num_workers 4 \
-             --pin_mem
+             --pin_mem \
+             ${EXTRA_ARGS}
      "
 
 rm -f "${SELECT_GPU_SCRIPT}"
