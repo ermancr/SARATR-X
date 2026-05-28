@@ -61,6 +61,13 @@ EXTRA_ARGS="${EXTRA_ARGS:-}"
 export MIOPEN_USER_DB_PATH="/tmp/${USER}-miopen-cache-${SLURM_JOB_ID}"
 export MIOPEN_CUSTOM_CACHE_DIR="${MIOPEN_USER_DB_PATH}"
 
+# -- NCCL hardening (LUMI MI250X can hang on collective init/broadcast) ---
+# Default watchdog is 10 min — too tight when ~24 GCDs spin up simultaneously.
+# init_process_group(timeout=30min) is also set in util/misc.py.
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1   # surface NCCL errors to Python
+export NCCL_ASYNC_ERROR_HANDLING=1         # legacy name, harmless to keep
+export NCCL_IB_TIMEOUT=22                  # bump InfiniBand retry timeout
+
 # -- uv cache on node-local NVMe -----------------------------------------
 export UV_CACHE_DIR="/tmp/${USER}-uv-cache-${SLURM_JOB_ID}"
 export UV_LINK_MODE=copy
