@@ -13,25 +13,28 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Train SARATR-X (HiViT MAE) on SAR HDF5 tiles — 1 node, 8 MI250X GCDs
+# Train SARATR-X (HiViT MAE) on SAR HDF5 tiles — 1 node, 8 MI250X GCDs.
+#
+# Standalone-clone form: uses isr-automatic-target-recognition's uv venv
+# (extras `rocm`, `mtl-yolo`) + atr-base.sif, training script lives at
+# ${SARATRX}/pre-training/train_h5_lumi.py.
 #
 # Usage:
-#   sbatch SARATR-X/pre-training/train_saratrx_lumi.sh
+#   sbatch /users/eacar/projects/SARATR-X-fm10/pre-training/train_saratrx_lumi.sh
 #
 # Resume: auto-resumes from checkpoint-latest.pth if present in OUTPUT_DIR.
 # ---------------------------------------------------------------------------
 
 # -- paths ----------------------------------------------------------------
-ISR_REPO="${HOME}/projects/isr-automatic-target-recognition"
-SARATRX="${HOME}/projects/SARATR-X"
+ISR_REPO="${ISR_REPO:-${HOME}/projects/isr-automatic-target-recognition}"
+SARATRX="${SARATRX:-/users/eacar/projects/SARATR-X-fm10}"
 
 H5_TRAIN="/scratch/project_462001182/snow_owl/data/datasets/air_land_maritime_best_20260511_003_resampled_05/train.h5"
 H5_TEST="/scratch/project_462001182/snow_owl/data/datasets/air_land_maritime_test_20260513_001_resampled_05/test.h5"
 
-OUTPUT_DIR="${OUTPUT_DIR:-/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain}"
+OUTPUT_DIR="${OUTPUT_DIR:-/scratch/project_462001182/foundation_model_dev/users/eacar/experiments/saratrx_pretrain}"
 
-# ImageNet-pretrained HiViT MAE init weights (set to "" to skip)
-INIT_CKPT="${SARATRX}/pre-training/mae_hivit_base_1600ep.pth"
+INIT_CKPT="${INIT_CKPT:-${SARATRX}/pre-training/mae_hivit_base_1600ep.pth}"
 
 SIF="${SIF:-/scratch/project_462001182/snow_owl/containers/singularity/atr-base.sif}"
 
@@ -64,9 +67,9 @@ export MIOPEN_CUSTOM_CACHE_DIR="${MIOPEN_USER_DB_PATH}"
 # -- NCCL hardening (LUMI MI250X can hang on collective init/broadcast) ---
 # Default watchdog is 10 min — too tight when ~24 GCDs spin up simultaneously.
 # init_process_group(timeout=30min) is also set in util/misc.py.
-export TORCH_NCCL_ASYNC_ERROR_HANDLING=1   # surface NCCL errors to Python
-export NCCL_ASYNC_ERROR_HANDLING=1         # legacy name, harmless to keep
-export NCCL_IB_TIMEOUT=22                  # bump InfiniBand retry timeout
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+export NCCL_ASYNC_ERROR_HANDLING=1
+export NCCL_IB_TIMEOUT=22
 
 # -- uv cache on node-local NVMe -----------------------------------------
 export UV_CACHE_DIR="/tmp/${USER}-uv-cache-${SLURM_JOB_ID}"
@@ -88,6 +91,9 @@ BIND="${BIND},/etc/ssl/certs:/etc/ssl/certs:ro"
 BIND="${BIND},/etc/resolv.conf:/etc/resolv.conf:ro"
 BIND="${BIND},/etc/hosts:/etc/hosts:ro"
 BIND="${BIND},/etc/nsswitch.conf:/etc/nsswitch.conf:ro"
+# Some containers ship without /opt/amdgpu/share/libdrm/amdgpu.ids; bind from host if available.
+[[ -f /usr/share/libdrm/amdgpu.ids ]] && \
+    BIND="${BIND},/usr/share/libdrm/amdgpu.ids:/opt/amdgpu/share/libdrm/amdgpu.ids:ro"
 export SINGULARITY_BIND="${BIND}"
 export SINGULARITYENV_SLURM_JOB_ID="${SLURM_JOB_ID}"
 
@@ -101,15 +107,25 @@ exec "$@"
 GPUEOF
 chmod +x "${SELECT_GPU_SCRIPT}"
 
+# -- init ckpt sanity (skip if missing; train_h5_lumi handles --init_ckpt absence) --
+INIT_CKPT_ARG=()
+if [[ -f "${INIT_CKPT}" ]]; then
+    INIT_CKPT_ARG=(--init_ckpt "${INIT_CKPT}")
+else
+    echo "WARNING: INIT_CKPT not found at ${INIT_CKPT} — falling back to random init / --resume auto."
+fi
+
 # -- launch ---------------------------------------------------------------
 echo "=== SARATR-X pre-training ==="
 echo "  Job ID     : ${SLURM_JOB_ID}"
 echo "  Nodes      : ${SLURM_NODELIST}"
 echo "  GPUs       : 8"
+echo "  ISR repo   : ${ISR_REPO}"
+echo "  SARATRX    : ${SARATRX}"
 echo "  H5 train   : ${H5_TRAIN}"
 echo "  H5 test    : ${H5_TEST}"
 echo "  Output     : ${OUTPUT_DIR}"
-echo "  Init ckpt  : ${INIT_CKPT}"
+echo "  Init ckpt  : ${INIT_CKPT} (present=$( [[ -f ${INIT_CKPT} ]] && echo yes || echo no ))"
 echo "  Input size : ${INPUT_SIZE}"
 echo "  Epochs     : ${EPOCHS}"
 echo "  Batch/GPU  : ${BATCH_SIZE}"
@@ -139,7 +155,7 @@ srun --kill-on-bad-exit=1 \
          python ${SARATRX}/pre-training/train_h5_lumi.py \
              --h5_train  ${H5_TRAIN} \
              --h5_test   ${H5_TEST} \
-             --init_ckpt ${INIT_CKPT} \
+             ${INIT_CKPT_ARG[@]+--init_ckpt ${INIT_CKPT}} \
              --output_dir ${OUTPUT_DIR} \
              --resume auto \
              --input_size ${INPUT_SIZE} \
