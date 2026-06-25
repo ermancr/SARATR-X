@@ -25,7 +25,7 @@ ls /scratch/project_462001182/snow_owl/data/datasets/air_land_maritime_test_2026
 ls /scratch/project_462001182/snow_owl/data/models/yolo/pretrained_weights/v9-m.pt
 
 # Verify SaRaTrX existing pretrained checkpoint (used by Phase 1)
-ls /scratch/project_462001182/snow_owl/experiments/saratrx_pretrain/checkpoint-800.pth
+ls /scratch/project_462001182/foundation_model_dev/users/eacar/experiments/saratrx_pretrain/checkpoint-800.pth
 
 # Verify SaRaTrX pretraining data (used by Phase 2 — same as YOLO data)
 ls /scratch/project_462001182/snow_owl/data/datasets/air_land_maritime_best_20260511_003_resampled_05/train.h5
@@ -137,7 +137,7 @@ All experiments use `train_saratrx_lumi.sh` as the base launcher with env-var ov
 
 ```bash
 cd ~/projects/SARATR-X && git checkout fm-3-b-resolution-matched-pretraining-768x768 && \
-OUTPUT_DIR=/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain_2a_768_baseline \
+OUTPUT_DIR=/scratch/project_462001182/foundation_model_dev/users/eacar/experiments/saratrx_pretrain_2a_768_baseline \
 sbatch pre-training/train_saratrx_lumi.sh
 ```
 
@@ -152,7 +152,7 @@ sbatch pre-training/train_saratrx_lumi.sh
 
 ```bash
 cd ~/projects/SARATR-X && git checkout fm-10-d3-object-aware-masking && \
-OUTPUT_DIR=/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain_2b_768_oam \
+OUTPUT_DIR=/scratch/project_462001182/foundation_model_dev/users/eacar/experiments/saratrx_pretrain_2b_768_oam \
 sbatch pre-training/train_saratrx_lumi.sh
 ```
 
@@ -167,7 +167,7 @@ sbatch pre-training/train_saratrx_lumi.sh
 
 ```bash
 cd ~/projects/SARATR-X && git checkout fm-11-d4-multi-scale-decoder-loss && \
-OUTPUT_DIR=/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain_2c_768_msl \
+OUTPUT_DIR=/scratch/project_462001182/foundation_model_dev/users/eacar/experiments/saratrx_pretrain_2c_768_msl \
 sbatch pre-training/train_saratrx_lumi.sh
 ```
 
@@ -284,7 +284,7 @@ wandb sync /scratch/project_462001182/snow_owl/logs/runs/<run_dir>/wandb/wandb/o
 
 ```bash
 # Keep only best checkpoints, remove optimizer states to save space
-cd /scratch/project_462001182/snow_owl/experiments/saratrx_pretrain_768_full
+cd /scratch/project_462001182/foundation_model_dev/users/eacar/experiments/saratrx_pretrain_768_full
 rm checkpoint-latest.pth  # 1.2GB (has optimizer state)
 # Keep checkpoint-{25,50,...,200}.pth for the best performing epoch
 ```

@@ -28,7 +28,7 @@ SARATRX="${HOME}/projects/SARATR-X"
 H5_TRAIN="/scratch/project_462001182/snow_owl/data/datasets/air_land_maritime_best_20260511_003_resampled_05/train.h5"
 H5_TEST="/scratch/project_462001182/snow_owl/data/datasets/air_land_maritime_test_20260513_001_resampled_05/test.h5"
 
-OUTPUT_DIR="${OUTPUT_DIR:-/scratch/project_462001182/snow_owl/experiments/saratrx_pretrain}"
+OUTPUT_DIR="${OUTPUT_DIR:-/scratch/project_462001182/foundation_model_dev/users/eacar/experiments/saratrx_pretrain}"
 
 # ImageNet-pretrained HiViT MAE init weights (set to "" to skip)
 INIT_CKPT="${SARATRX}/pre-training/mae_hivit_base_1600ep.pth"
